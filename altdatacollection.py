@@ -68,6 +68,7 @@ async def on_message(websocket, message):
         ask_df['time'] = [obevent_time] * len(ask_df)
         bid_df['snapshot'] = [snapshot_count] * len(bid_df)
         ask_df['snapshot'] = [snapshot_count] * len(ask_df)
+     
 
        
         snapshot_count += 1
@@ -107,6 +108,9 @@ async def on_message(websocket, message):
         ask_df['snapshot'] = [snapshot_count] * len(ask_df)
         bid_df = pd.concat([oldbid_df, bid_df])
         ask_df = pd.concat([oldask_df, ask_df])
+        
+        
+
         print(bid_df)
         
         
