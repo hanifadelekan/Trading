@@ -17,9 +17,6 @@ WS_URL = "wss://fstream.binance.com/ws/solusdt@depth@100ms"
 ob_snapshot = None
 snapshot_count = 0
 ob_lastupdateid = None
-ob_df = pd.DataFrame(columns=['count', 'time', 'type', 'price', 'size', 'best_bid', 'best_ask', 'spread', 'midprice','length'])
-obids = {}
-oasks = {}
 bid_df = None
 ask_df = None
 obevent_time = []
@@ -32,7 +29,9 @@ async def connect_to_binance():
             await on_message(websocket, message)
             if snapshot_count > 10:
                 #ob_df.to_csv('order_book_data.csv', index=False)
-                #ob_df.to_parquet('order_book.parquet', compression='zstd')
+
+                bid_df.to_parquet('bid_order_book.parquet', compression='zstd')
+                ask_df.to_parquet('ask_order_book.parquet', compression='zstd')
                 logging.info("Saved 200 updates to CSV. Exiting.")
                 print(bid_df)
                 break
@@ -47,7 +46,7 @@ async def on_open(websocket):
     await websocket.send(json.dumps(subscribe_message))
 
 async def on_message(websocket, message):
-    global snapshot_count, ob_lastupdateid, ob_snapshot, ob_df, obids, oasks, bid_df, ask_df, obevent_time
+    global snapshot_count, ob_lastupdateid, ob_snapshot, bid_df, ask_df, obevent_time
 
     event = ujson.loads(message)
     if 'result' in event:
@@ -67,6 +66,8 @@ async def on_message(websocket, message):
         ask_df.set_index('price', inplace=True)
         bid_df['time'] = [obevent_time] * len(bid_df)
         ask_df['time'] = [obevent_time] * len(ask_df)
+        bid_df['snapshot'] = [snapshot_count] * len(bid_df)
+        ask_df['snapshot'] = [snapshot_count] * len(ask_df)
 
        
         snapshot_count += 1
@@ -85,19 +86,25 @@ async def on_message(websocket, message):
         event_time = event['E']
         
         # Update order book
-        print(bid_df)
+      
+        oldbid_df = bid_df.copy()
+        oldask_df = ask_df.copy()
         for price, size in ubids:
             if size == 0:
                 bid_df.drop(price, errors='ignore')
             else:
                 
-                bid_df.loc[price] = [size, event_time]
+                bid_df.loc[price] = [size, event_time,None]
         
         for price, size in uasks:
             if size == 0:
                 ask_df.drop(price, errors='ignore')
             else:
-                ask_df.loc[price] = [size, event_time]
+                ask_df.loc[price] = [size, event_time,None]
+        bid_df['snapshot'] = [snapshot_count] * len(bid_df)
+        ask_df['snapshot'] = [snapshot_count] * len(ask_df)
+        bid_df = pd.concat([oldbid_df, bid_df])
+        ask_df = pd.concat([oldask_df, ask_df])
         print(bid_df)
         
         
