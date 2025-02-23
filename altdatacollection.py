@@ -97,8 +97,10 @@ async def on_message(websocket, message):
                 bid_df.loc[price] = [size, event_time,None]
         
         for price, size in uasks:
+            #print(price,size)
             if size == 0:
                 ask_df.drop(price, errors='ignore')
+                
             else:
                 ask_df.loc[price] = [size, event_time,None]
         bid_df['snapshot'] = [snapshot_count] * len(bid_df)
