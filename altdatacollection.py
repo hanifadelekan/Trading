@@ -20,6 +20,9 @@ ob_lastupdateid = None
 ob_df = pd.DataFrame(columns=['count', 'time', 'type', 'price', 'size', 'best_bid', 'best_ask', 'spread', 'midprice','length'])
 obids = {}
 oasks = {}
+bid_df = None
+ask_df = None
+event_time = []
 
 async def connect_to_binance():
     async with websockets.connect(WS_URL) as websocket:
@@ -27,10 +30,11 @@ async def connect_to_binance():
         while True:
             message = await websocket.recv()
             await on_message(websocket, message)
-            if snapshot_count > 50:
+            if snapshot_count > 10:
                 #ob_df.to_csv('order_book_data.csv', index=False)
-                ob_df.to_parquet('order_book.parquet', compression='zstd')
+                #ob_df.to_parquet('order_book.parquet', compression='zstd')
                 logging.info("Saved 200 updates to CSV. Exiting.")
+                print(bid_df)
                 break
 
 async def on_open(websocket):
@@ -43,7 +47,7 @@ async def on_open(websocket):
     await websocket.send(json.dumps(subscribe_message))
 
 async def on_message(websocket, message):
-    global snapshot_count, ob_lastupdateid, ob_snapshot, ob_df, obids, oasks
+    global snapshot_count, ob_lastupdateid, ob_snapshot, ob_df, obids, oasks, bid_df, ask_df, event_time
 
     event = ujson.loads(message)
     if 'result' in event:
@@ -55,13 +59,17 @@ async def on_message(websocket, message):
         ob_snapshot = await fetch(REST_URL)
         ob_lastupdateid = ob_snapshot['lastUpdateId']
         event_time = ob_snapshot['E']
-        
+        bids = ob_snapshot['bids']
+        asks = ob_snapshot['asks']
+        multi_indexb = pd.MultiIndex.from_arrays([[event_time] * len(bids),range(len(bids)), [x[0] for x in bids]], names=['timestamp', 'level','price'])
+        bid_df = pd.DataFrame(bids, columns=['price','size'],index=multi_indexb)
+        print(bid_df)
+      
+        ask_df = pd.DataFrame(asks, columns=['price', 'size'])
         # Initialize order book
-        obids = {float(p[0]): float(p[1]) for p in ob_snapshot['bids']}
-        oasks = {float(p[0]): float(p[1]) for p in ob_snapshot['asks']}
-        
-        # Create DataFrame entries
-        await update_dataframe(event_time)
+        bid_df.set_index('price', inplace=True)
+        ask_df.set_index('price', inplace=True)
+       
         snapshot_count += 1
         logging.info("Initial snapshot processed")
     
@@ -73,51 +81,27 @@ async def on_message(websocket, message):
                 return  # Skip until valid update
         
         # Process updates
-        ubids = {float(p[0]): float(p[1]) for p in event['b']}
-        uasks = {float(p[0]): float(p[1]) for p in event['a']}
+        ubids = event['b']
+        uasks = event['a']
         event_time = event['E']
         
         # Update order book
-        for price, size in ubids.items():
+        for price, size in ubids:
             if size == 0:
-                obids.pop(price, None)
+                bid_df.drop(price, errors='ignore')
             else:
-                obids[price] = size
-        for price, size in uasks.items():
+                bid_df.loc[price,'size'] = size
+        for price, size in uasks:
             if size == 0:
-                oasks.pop(price, None)
+                ask_df.drop(price, errors='ignore')
             else:
-                oasks[price] = size
+                ask_df.loc[price,'size'] = size
         
-        # Update dataframe
-        await update_dataframe(event_time)
+     
         ob_lastupdateid = event['u']
         snapshot_count += 1
         logging.info(f"Processed update {snapshot_count-1}")
 
-async def update_dataframe(event_time):
-    global ob_df
-    
-    sorted_bids = sorted(obids.items(), key=lambda x: -x[0])
-    sorted_asks = sorted(oasks.items(), key=lambda x: x[0])
-    
-    best_bid = sorted_bids[0][0] if sorted_bids else None
-    best_ask = sorted_asks[0][0] if sorted_asks else None
-    
-    # Create SINGLE ROW per update with full order book
-    new_row = {
-        'timestamp': event_time,
-        'update_count': snapshot_count,
-        'bids': ujson.dumps(sorted_bids),  # Store as JSON string
-        'asks': ujson.dumps(sorted_asks),
-        'best_bid': best_bid,
-        'best_ask': best_ask,
-        'spread': best_ask - best_bid,
-        'midprice': (best_bid + best_ask)/2,
-        'length': len(sorted_bids) + len(sorted_asks)
-    }
-    
-    ob_df = pd.concat([ob_df, pd.DataFrame([new_row])], ignore_index=True)
 
 async def fetch(url):
     async with aiohttp.ClientSession() as session:
