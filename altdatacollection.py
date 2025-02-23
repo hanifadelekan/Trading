@@ -22,7 +22,7 @@ obids = {}
 oasks = {}
 bid_df = None
 ask_df = None
-event_time = []
+obevent_time = []
 
 async def connect_to_binance():
     async with websockets.connect(WS_URL) as websocket:
@@ -47,7 +47,7 @@ async def on_open(websocket):
     await websocket.send(json.dumps(subscribe_message))
 
 async def on_message(websocket, message):
-    global snapshot_count, ob_lastupdateid, ob_snapshot, ob_df, obids, oasks, bid_df, ask_df, event_time
+    global snapshot_count, ob_lastupdateid, ob_snapshot, ob_df, obids, oasks, bid_df, ask_df, obevent_time
 
     event = ujson.loads(message)
     if 'result' in event:
@@ -58,17 +58,16 @@ async def on_message(websocket, message):
         # Fetch initial snapshot
         ob_snapshot = await fetch(REST_URL)
         ob_lastupdateid = ob_snapshot['lastUpdateId']
-        event_time = ob_snapshot['E']
+        obevent_time = ob_snapshot['E']
         bids = ob_snapshot['bids']
         asks = ob_snapshot['asks']
-        multi_indexb = pd.MultiIndex.from_arrays([[event_time] * len(bids),range(len(bids)), [x[0] for x in bids]], names=['timestamp', 'level','price'])
-        bid_df = pd.DataFrame(bids, columns=['price','size'],index=multi_indexb)
-        print(bid_df)
-      
-        ask_df = pd.DataFrame(asks, columns=['price', 'size'])
-        # Initialize order book
+        bid_df = pd.DataFrame(bids, columns=['price', 'size'])
         bid_df.set_index('price', inplace=True)
+        ask_df = pd.DataFrame(asks, columns=['price', 'size'])
         ask_df.set_index('price', inplace=True)
+        bid_df['time'] = [obevent_time] * len(bid_df)
+        ask_df['time'] = [obevent_time] * len(ask_df)
+
        
         snapshot_count += 1
         logging.info("Initial snapshot processed")
@@ -86,18 +85,22 @@ async def on_message(websocket, message):
         event_time = event['E']
         
         # Update order book
+        print(bid_df)
         for price, size in ubids:
             if size == 0:
                 bid_df.drop(price, errors='ignore')
             else:
-                bid_df.loc[price,'size'] = size
+                
+                bid_df.loc[price] = [size, event_time]
+        
         for price, size in uasks:
             if size == 0:
                 ask_df.drop(price, errors='ignore')
             else:
-                ask_df.loc[price,'size'] = size
+                ask_df.loc[price] = [size, event_time]
+        print(bid_df)
         
-     
+        
         ob_lastupdateid = event['u']
         snapshot_count += 1
         logging.info(f"Processed update {snapshot_count-1}")
